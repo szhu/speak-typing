@@ -1,0 +1,547 @@
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1"
+    />
+    <title>Typewriter</title>
+    <style>
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          background: black;
+          color: white;
+        }
+      }
+      body {
+        margin: 0;
+        position: relative;
+      }
+      #buttons {
+        position: absolute;
+        bottom: 3px;
+        right: 3px;
+      }
+      #buttons button {
+        padding: 0.5em;
+        background: #f0f0f0;
+        border-radius: 0.3em;
+        border: 2px solid currentColor;
+        cursor: pointer;
+        color: inherit;
+        background: none;
+      }
+      #textarea {
+        border: 2px solid #88888888;
+        background: none;
+        color: inherit;
+        height: 100%;
+        width: 100%;
+        border-radius: 0;
+        resize: none;
+      }
+      #textarea:focus {
+        outline: none;
+        border-color: currentColor;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="buttons">
+      <button id="button-revert">Revert</button>
+      <button id="button-save">Save</button>
+    </div>
+    <textarea id="textarea"></textarea>
+  </body>
+  <script>
+    const SpeechManager = {
+      current: null,
+      next: null,
+      advance() {
+        this.current = this.next;
+        this.next = null;
+        if (this.current) {
+          speechSynthesis.speak(this.current);
+          // console.log("[SpeechManager]", this.current.text);
+        }
+      },
+      push(word, delimiter = ". ") {
+        word = '"' + word + '"';
+        if (this.next) {
+          this.next = this.makeUtterance(this.next.text + delimiter + word);
+        } else {
+          this.next = this.makeUtterance(word);
+        }
+        if (!this.current) {
+          this.advance();
+        }
+      },
+      reset() {
+        speechSynthesis.cancel();
+        this.current = null;
+        this.next = null;
+      },
+
+      makeUtterance(text) {
+        let opts = {
+          voice,
+          rate: 1.3,
+          text,
+        };
+        let utterance = new SpeechSynthesisUtterance();
+        for (let key in opts) {
+          utterance[key] = opts[key];
+        }
+        utterance.addEventListener("end", () => {
+          this.advance();
+        });
+        return utterance;
+      },
+    };
+
+    {
+      let context = new AudioContext();
+      let o = context.createOscillator();
+      o.frequency.setValueAtTime(0, context.currentTime);
+      let g = context.createGain();
+      g.gain.value = 0.1;
+      o.connect(g);
+      g.connect(context.destination);
+      o.start(0);
+    }
+
+    let voice = speechSynthesis
+      .getVoices()
+      .find((voice) => voice.name === "Samantha");
+
+    let patterns = /([^\s;,.?!"]+)[\s;,.?!"]$/;
+    function getLastCompleteWord(s) {
+      let m = patterns.exec(s);
+      return m && m[1];
+    }
+
+    let deleteLastWordPattern = /([^\s\.]+)[\s\.]*$/;
+    function deleteLastWord(s) {
+      let m = deleteLastWordPattern.exec(s);
+      if (m) {
+        return s.slice(0, m.index);
+      } else {
+        return s;
+      }
+    }
+
+    let deleteLastSentencePattern = /[^;.?!\n]+[;.?!"]+[^;.?!"]*$/;
+    function deleteLastSentence(s) {
+      s = s.replace(/\s+$/, "") + ".";
+      let m = deleteLastSentencePattern.exec(s);
+      if (m) {
+        return m.index === 0
+          ? ""
+          : (s.slice(0, m.index) + " ").replace(/\n\s+$/, "\n");
+      } else {
+        return s;
+      }
+    }
+
+    function indexOf(string, patterns, repeat, currentIndex, trim) {
+      let d = 0;
+
+      while (repeat > 0) {
+        // console.log(
+        //   patterns,
+        //   repeat,
+        //   currentIndex,
+        //   string.slice(currentIndex).slice(0, 50)
+        // );
+        currentIndex = Math.min(
+          ...patterns
+            .map((pattern) => string.indexOf(pattern, currentIndex + d))
+            .filter((index) => index !== -1)
+        );
+        d = 1;
+        // console.log("currentIndex", currentIndex);
+        if (currentIndex === Infinity) {
+          return null;
+        }
+        repeat--;
+      }
+
+      while (repeat < 0) {
+        currentIndex = Math.max(
+          ...patterns
+            .map((pattern) => string.lastIndexOf(pattern, currentIndex - d))
+            .filter((index) => index !== -1)
+        );
+        d = 1;
+        // console.log(currentIndex);
+        if (currentIndex === -Infinity) {
+          return null;
+        }
+        repeat++;
+      }
+
+      if (trim) {
+        // TODO
+        currentIndex += patterns[0].length;
+      }
+      return currentIndex;
+    }
+
+    function select(delimiters, offset = 0) {
+      let endOffset = offset < 0 ? offset : offset + 1;
+      let index =
+        offset <= 0 ? textarea.selectionStart - 1 : textarea.selectionEnd;
+
+      // console.log("a", indexOf(textarea.value, delimiters, endOffset, index));
+      // console.log("b", indexOf(textarea.value, delimiters, 1, index));
+      // console.log("c", textarea.value.length);
+      let end = indexOf(textarea.value, delimiters, endOffset, index);
+      if (offset < 0) {
+        end = end ?? indexOf(textarea.value, delimiters, 1, index);
+      }
+      end = end ?? textarea.value.length;
+
+      let start = indexOf(textarea.value, delimiters, -1, end - 1, true) ?? 0;
+
+      let text = textarea.value.slice(start, end);
+      SpeechManager.push(text, " ");
+
+      textarea.selectionStart = start;
+      textarea.selectionEnd = end;
+    }
+
+    function selectParagraph(offset = 0) {
+      select(["\n\n"], offset);
+    }
+
+    function selectWord(offset = 0) {
+      select([" ", "\n"], offset);
+    }
+
+    const UndoManager = {
+      timeout: null,
+      deferred: null,
+      undoStack: [],
+      redoStack: [],
+      async push(item, debounce) {
+        this.deferred = null;
+        clearTimeout(this.timeout);
+
+        if (debounce) {
+          await new Promise((resolve) => {
+            this.deferred = resolve;
+            this.timeout = setTimeout(resolve, 500);
+          });
+        }
+
+        this.deferred = null;
+        if (this.undoStack.length) {
+          let lastItem = this.undoStack[this.undoStack.length - 1];
+          if (lastItem.text === item.text) {
+            lastItem.cursor = item.cursor;
+            return;
+          }
+        }
+
+        this.undoStack.push(item);
+        this.redoStack = [];
+      },
+      async undo() {
+        if (this.deferred) {
+          this.deferred();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        clearTimeout(this.timeout);
+
+        if (this.undoStack.length >= 2) {
+          let undoItem = this.undoStack.pop();
+          this.redoStack.push(undoItem);
+          let item = this.undoStack[this.undoStack.length - 1];
+          return item;
+        }
+      },
+      async redo() {
+        if (this.deferred) {
+          this.deferred();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        clearTimeout(this.timeout);
+        if (this.redoStack.length) {
+          let text = this.redoStack.pop();
+          this.undoStack.push(text);
+          return text;
+        }
+      },
+    };
+
+    let lastLength = 0;
+    let lastServerValue = "";
+    let file =
+      new URLSearchParams(location.search).get("file") ||
+      location.pathname.replace(/^\//, "");
+    let params = file ? { file } : {};
+    let localStoragePrefix = new URL(
+      "?" + new URLSearchParams(params),
+      location
+    ).href;
+    let textarea = document.querySelector("#textarea");
+    let saveButton = document.querySelector("#button-save");
+    let revertButton = document.querySelector("#button-revert");
+
+    function revertToLocalVersion() {
+      updateText(localOldText, 2);
+    }
+
+    async function revertToServerVersion() {
+      let text = (await interactWithServer())?.value;
+      updateText(text, 2);
+    }
+
+    async function init() {
+      let localOldText = localStorage.getItem(localStoragePrefix + "|text");
+      if (localOldText) {
+        revertToLocalVersion();
+      } else {
+        await revertToServerVersion();
+      }
+      textarea.scrollTo({ top: textarea.scrollHeight, behavior: "smooth" });
+      localStorage.getItem(localStoragePrefix + "|text")
+        ? localStorage.setItem(
+            localStoragePrefix + "|textBackup",
+            localStorage.getItem(localStoragePrefix + "|text")
+          )
+        : localStorage.removeItem(localStoragePrefix + "|textBackup");
+      textarea.focus();
+    }
+
+    async function interactWithServer(value) {
+      let origin = localStorage["speak-typing-server"] ?? "";
+      try {
+        let url = origin + "/file/" + file;
+        let response = await fetch(url, {
+          method: value == null ? "GET" : "POST",
+          body: value,
+        });
+        let json = await response.json();
+        lastServerValue = json.value;
+        return json;
+      } catch (e) {
+        console.log("Error", e);
+        SpeechManager.push("Error");
+        throw e;
+      }
+    }
+
+    async function save() {
+      let text = textarea.value;
+      if (lastServerValue === text) {
+        SpeechManager.push("No changes.");
+        return;
+      }
+
+      let result = await interactWithServer(text);
+      if (result && result.value == text) {
+        localStorage.removeItem(localStoragePrefix + "|text");
+        console.log("Saved");
+        SpeechManager.push("Saved!");
+      } else {
+        console.log("Error", result);
+        SpeechManager.push("Error!");
+      }
+    }
+
+    saveButton.addEventListener("click", save);
+
+    function revert() {
+      if (!confirm("Revert to last saved version?")) return;
+
+      revertToServerVersion();
+    }
+
+    revertButton.addEventListener("click", revert);
+
+    async function updateText(text, undoLevel) {
+      let index;
+      if (typeof text === "function") {
+        let before = textarea.value.slice(0, textarea.selectionEnd);
+        let after = textarea.value.slice(textarea.selectionEnd);
+
+        let newBefore = await text(before);
+        text = newBefore + after;
+        index = newBefore.length;
+      }
+
+      if (text != null && text.cursor != null) {
+        index = text.cursor;
+        text = text.text;
+      }
+
+      if (typeof text === "string") {
+        textarea.value = text;
+        if (index != null) {
+          textarea.selectionStart = index;
+          textarea.selectionEnd = index;
+        }
+      } else {
+        text = textarea.value;
+      }
+
+      if (index == null) {
+        index = textarea.selectionEnd;
+      }
+
+      if (undoLevel > 1) {
+        UndoManager.push({ text, cursor: textarea.selectionEnd }, false);
+      } else if (undoLevel > 0) {
+        UndoManager.push({ text, cursor: textarea.selectionEnd }, true);
+      }
+      if (text === lastServerValue) {
+        localStorage.removeItem(localStoragePrefix + "|text");
+      } else {
+        localStorage.setItem(localStoragePrefix + "|text", text);
+      }
+
+      let lastWord = getLastCompleteWord(text.slice(0, index));
+      if (lastWord && text.length > lastLength) {
+        SpeechManager.push(lastWord);
+      }
+      lastLength = text.length;
+    }
+
+    textarea.addEventListener("input", () => updateText(undefined, 1));
+
+    textarea.addEventListener("keydown", async function (event) {
+      if (
+        event.key === "Backspace" ||
+        event.key === "ArrowUp" ||
+        event.key === "ArrowDown" ||
+        event.key === "ArrowLeft" ||
+        // event.key === "ArrowRight" ||
+        event.key === "Escape"
+      ) {
+        SpeechManager.reset();
+      }
+
+      if (
+        event.key === "Backspace" &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.shiftKey &&
+        event.altKey
+      ) {
+        lastLength = 0;
+        SpeechManager.reset();
+        updateText(deleteLastWord, 2);
+        event.preventDefault();
+      } else if (
+        event.key === "Backspace" &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.shiftKey &&
+        event.metaKey
+      ) {
+        SpeechManager.reset();
+        updateText(deleteLastSentence, 2);
+        event.preventDefault();
+      } else if (
+        event.key === "z" &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.shiftKey &&
+        event.metaKey
+      ) {
+        updateText(await UndoManager.undo(), 0);
+        event.preventDefault();
+      } else if (
+        event.key === "z" &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        event.shiftKey &&
+        event.metaKey
+      ) {
+        updateText(await UndoManager.redo(), 0);
+        event.preventDefault();
+      } else if (
+        event.key === "a" &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.shiftKey &&
+        event.metaKey
+      ) {
+        selectParagraph();
+        event.preventDefault();
+      } else if (
+        event.key === "ArrowUp" &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.shiftKey &&
+        event.metaKey
+      ) {
+        selectParagraph(-1);
+        event.preventDefault();
+      } else if (
+        event.key === "ArrowDown" &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.shiftKey &&
+        event.metaKey
+      ) {
+        selectParagraph(1);
+        event.preventDefault();
+      } else if (
+        event.key === "ArrowLeft" &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.shiftKey &&
+        event.altKey
+      ) {
+        selectWord(-1);
+        event.preventDefault();
+      } else if (
+        event.key === "ArrowRight" &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.shiftKey &&
+        event.altKey
+      ) {
+        selectWord(1);
+        event.preventDefault();
+      } else if (
+        (event.key.length === 1 || event.key === "Enter") &&
+        textarea.selectionStart !== textarea.selectionEnd &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey
+      ) {
+        let text = textarea.value.slice(
+          textarea.selectionStart,
+          textarea.selectionEnd
+        );
+        if (text.match(/\s+/)) {
+          textarea.selectionStart = textarea.selectionEnd;
+        }
+      } else if (
+        event.key === "s" &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.shiftKey &&
+        event.metaKey
+      ) {
+        event.preventDefault();
+        await save();
+      }
+    });
+
+    textarea.addEventListener("mousedown", function (event) {
+      if (!event.metaKey && !event.shiftKey) {
+        this.selectionStart = this.textLength;
+        this.selectionEnd = this.textLength;
+        this.focus();
+        event.preventDefault();
+      }
+    });
+
+    init();
+  </script>
+</html>
