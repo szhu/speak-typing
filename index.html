@@ -1,0 +1,767 @@
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1"
+    />
+    <title>Typewriter</title>
+    <style>
+      :root {
+        --color-bg: white;
+        --color-fg: black;
+        background: var(--color-bg);
+        color: var(--color-fg);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --color-bg: black;
+          --color-fg: white;
+        }
+      }
+      :root,
+      body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+      }
+      #buttons {
+        position: absolute;
+        bottom: 3px;
+        right: 3px;
+      }
+      #buttons button {
+        padding: 0.5em;
+        background: var(--color-bg);
+        border-radius: 0.3em;
+        border: 2px solid currentColor;
+        cursor: pointer;
+        color: inherit;
+      }
+      textarea {
+        border: 2px solid #88888888;
+        background: none;
+        color: inherit;
+        /* height: 100%; */
+        width: 100%;
+        border-radius: 0;
+        resize: none;
+      }
+      textarea:focus {
+        outline: none;
+        border-color: currentColor;
+      }
+      #line-index {
+        font-family: monospace;
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        min-height: 1.3em;
+        line-height: 1.3em;
+        display: flex;
+        align-items: center;
+        padding: 1em;
+        background: var(--color-bg);
+        opacity: 0.7;
+      }
+      #textarea {
+        display: none;
+      }
+      .line-editor {
+        font-family: monospace;
+        min-height: 1.3em;
+        line-height: 1.3em;
+        display: flex;
+        padding: 1em;
+        white-space: pre-wrap;
+        overflow-y: auto;
+      }
+      .line-editor[data-offset="-1"] {
+        max-height: 40%;
+      }
+      #current-line-editor {
+        flex-grow: 1;
+      }
+      .line-editor[data-offset="1"] {
+        max-height: 20%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="buttons">
+      <button id="button-prev">Prev</button>
+      <button id="button-next">Next</button>
+      <button id="button-revert">Revert</button>
+      <button id="button-save">Save</button>
+    </div>
+    <textarea id="textarea" readonly></textarea>
+    <div id="line-index">0</div>
+    <div class="line-editor" data-offset="-1" readonly></div>
+    <textarea class="line-editor" id="current-line-editor"></textarea>
+    <div class="line-editor" data-offset="1" readonly></div>
+  </body>
+  <script>
+    // @ts-check
+
+    const SpeechManager = {
+      current: null,
+      next: null,
+      advance() {
+        this.current = this.next;
+        this.next = null;
+        if (this.current) {
+          speechSynthesis.speak(this.current);
+        }
+      },
+      push(word, delimiter = ". ") {
+        word = '"' + word.trim() + '"';
+        if (this.next) {
+          this.next = this.makeUtterance(this.next.text + delimiter + word);
+        } else {
+          this.next = this.makeUtterance(word);
+        }
+        if (!this.current) {
+          this.advance();
+        }
+      },
+      reset() {
+        speechSynthesis.cancel();
+        this.current = null;
+        this.next = null;
+      },
+
+      makeUtterance(text) {
+        let opts = {
+          voice,
+          rate: 1.3,
+          text,
+        };
+        let utterance = new SpeechSynthesisUtterance();
+        for (let key in opts) {
+          utterance[key] = opts[key];
+        }
+        utterance.addEventListener("end", () => {
+          this.advance();
+        });
+        return utterance;
+      },
+    };
+
+    {
+      let context = new AudioContext();
+      let o = context.createOscillator();
+      o.frequency.setValueAtTime(0, context.currentTime);
+      let g = context.createGain();
+      g.gain.value = 0.1;
+      o.connect(g);
+      g.connect(context.destination);
+      o.start(0);
+    }
+
+    let voice = speechSynthesis
+      .getVoices()
+      .find((voice) => voice.name === "Samantha");
+
+    let lastCompleteWordPattern = /([^\s;,.?!"]+)[\s;,.?!"]$/;
+    function getLastCompleteWord(s) {
+      let m = lastCompleteWordPattern.exec(s);
+      return m && m[1];
+    }
+
+    // let deleteLastWordPattern = /([^\s\.]+)[\s\.]*$/;
+    // function deleteLastWord(s) {
+    //   let m = deleteLastWordPattern.exec(s);
+    //   if (m) {
+    //     return s.slice(0, m.index);
+    //   } else {
+    //     return s;
+    //   }
+    // }
+
+    // let deleteLastSentencePattern = /[^;.?!\n]+[;.?!"]+[^;.?!"]*$/;
+    // function deleteLastSentence(s) {
+    //   s = s.replace(/\s+$/, "") + ".";
+    //   let m = deleteLastSentencePattern.exec(s);
+    //   if (m) {
+    //     return m.index === 0
+    //       ? ""
+    //       : (s.slice(0, m.index) + " ").replace(/\n\s+$/, "\n");
+    //   } else {
+    //     return s;
+    //   }
+    // }
+
+    // function indexOf(string, patterns, repeat, currentIndex, trim) {
+    //   let d = 0;
+
+    //   while (repeat > 0) {
+    //     // console.log(
+    //     //   patterns,
+    //     //   repeat,
+    //     //   currentIndex,
+    //     //   string.slice(currentIndex).slice(0, 50)
+    //     // );
+    //     currentIndex = Math.min(
+    //       ...patterns
+    //         .map((pattern) => string.indexOf(pattern, currentIndex + d))
+    //         .filter((index) => index !== -1)
+    //     );
+    //     d = 1;
+    //     // console.log("currentIndex", currentIndex);
+    //     if (currentIndex === Infinity) {
+    //       return null;
+    //     }
+    //     repeat--;
+    //   }
+
+    //   while (repeat < 0) {
+    //     currentIndex = Math.max(
+    //       ...patterns
+    //         .map((pattern) => string.lastIndexOf(pattern, currentIndex - d))
+    //         .filter((index) => index !== -1)
+    //     );
+    //     d = 1;
+    //     // console.log(currentIndex);
+    //     if (currentIndex === -Infinity) {
+    //       return null;
+    //     }
+    //     repeat++;
+    //   }
+
+    //   if (trim) {
+    //     // TODO
+    //     currentIndex += patterns[0].length;
+    //   }
+    //   return currentIndex;
+    // }
+
+    // /**
+    //  * @param {HTMLTextAreaElement} textarea
+    //  * @param {string[]} delimiters
+    //  * @param {number} offset
+    //  */
+    // function select(textarea, delimiters, offset = 0) {
+    //   let endOffset = offset < 0 ? offset : offset + 1;
+    //   let index =
+    //     offset <= 0 ? textarea.selectionStart - 1 : textarea.selectionEnd;
+
+    //   // console.log("a", indexOf(textarea.value, delimiters, endOffset, index));
+    //   // console.log("b", indexOf(textarea.value, delimiters, 1, index));
+    //   // console.log("c", textarea.value.length);
+    //   let end = indexOf(textarea.value, delimiters, endOffset, index);
+    //   if (offset < 0) {
+    //     end = end ?? indexOf(textarea.value, delimiters, 1, index);
+    //   }
+    //   end = end ?? textarea.value.length;
+
+    //   let start = indexOf(textarea.value, delimiters, -1, end - 1, true) ?? 0;
+
+    //   let text = textarea.value.slice(start, end);
+    //   SpeechManager.push(text, " ");
+
+    //   textarea.selectionStart = start;
+    //   textarea.selectionEnd = end;
+    // }
+
+    // function selectParagraph(offset = 0) {
+    //   select(textarea, ["\n\n"], offset);
+    // }
+
+    // function selectWord(offset = 0) {
+    //   select(textarea, [" ", "\n"], offset);
+    // }
+
+    const UndoManager = {
+      timeout: null,
+      deferred: null,
+      undoStack: [],
+      redoStack: [],
+      async push(item, debounce) {
+        this.deferred = null;
+        clearTimeout(this.timeout);
+
+        if (debounce) {
+          await new Promise((resolve) => {
+            this.deferred = resolve;
+            this.timeout = setTimeout(resolve, 500);
+          });
+        }
+
+        this.deferred = null;
+        if (this.undoStack.length) {
+          let lastItem = this.undoStack[this.undoStack.length - 1];
+          if (lastItem.text === item.text) {
+            lastItem.cursor = item.cursor;
+            return;
+          }
+        }
+
+        this.undoStack.push(item);
+        this.redoStack = [];
+      },
+      async undo() {
+        if (this.deferred) {
+          this.deferred();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        clearTimeout(this.timeout);
+
+        if (this.undoStack.length >= 2) {
+          let undoItem = this.undoStack.pop();
+          this.redoStack.push(undoItem);
+          let item = this.undoStack[this.undoStack.length - 1];
+          return item;
+        }
+      },
+      async redo() {
+        if (this.deferred) {
+          this.deferred();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        clearTimeout(this.timeout);
+        if (this.redoStack.length) {
+          let text = this.redoStack.pop();
+          this.undoStack.push(text);
+          return text;
+        }
+      },
+    };
+
+    let lastLength = 0;
+    let lastServerValue = "";
+    let file =
+      new URLSearchParams(location.search).get("file") ||
+      location.pathname.replace(/^\//, "");
+    let params = file ? { file } : {};
+    let localStoragePrefix = new URL(
+      "?" + new URLSearchParams(params),
+      location.href
+    ).href;
+
+    // /** @type {HTMLTextAreaElement} */
+    // let fullTextEditor = document.querySelector("#textarea");
+    /** @type {HTMLTextAreaElement} */
+    let lineEditor = document.querySelector("#current-line-editor");
+    let saveButton = document.querySelector("#button-save");
+    let revertButton = document.querySelector("#button-revert");
+
+    async function revertToServerVersion() {
+      let text = (await interactWithServer())?.value;
+
+      FullText.value = text;
+      LineEditing.updateLines();
+    }
+
+    async function init(textarea) {
+      let localOldText = localStorage.getItem(localStoragePrefix + "|text");
+      if (localOldText) {
+        FullText.value = localOldText;
+      } else {
+        await revertToServerVersion.call(textarea);
+      }
+      lineEditor.focus();
+      lineEditor.scrollTo({ top: lineEditor.scrollHeight, behavior: "smooth" });
+
+      localStorage.getItem(localStoragePrefix + "|text")
+        ? localStorage.setItem(
+            localStoragePrefix + "|textBackup",
+            localStorage.getItem(localStoragePrefix + "|text")
+          )
+        : localStorage.removeItem(localStoragePrefix + "|textBackup");
+    }
+
+    async function interactWithServer(value) {
+      let origin = localStorage["speak-typing-server"] ?? "";
+      try {
+        let url = origin + "/file/" + file;
+        let response = await fetch(url, {
+          method: value == null ? "GET" : "POST",
+          body: value,
+        });
+        let json = await response.json();
+        lastServerValue = json.value;
+        return json;
+      } catch (e) {
+        console.log("Error", e);
+        SpeechManager.push("Error");
+        throw e;
+      }
+    }
+
+    async function save() {
+      let text = FullText.value;
+      if (lastServerValue === text) {
+        SpeechManager.push("No changes.");
+        return;
+      }
+
+      let result = await interactWithServer(text);
+      if (result && result.value == text) {
+        localStorage.removeItem(localStoragePrefix + "|text");
+        console.log("Saved");
+        SpeechManager.push("Saved!");
+      } else {
+        console.log("Error", result);
+        SpeechManager.push("Error!");
+      }
+    }
+
+    saveButton.addEventListener("click", save);
+
+    async function revert() {
+      if (!confirm("Revert to last saved version?")) return;
+
+      await revertToServerVersion();
+      updateEditors();
+    }
+
+    revertButton.addEventListener("click", revert);
+
+    /**
+     * @typedef {{cursor: number, text: string}} TextState
+     *
+     * @param {HTMLTextAreaElement} textarea
+     * @param {TextState | null} textState
+     * @param {number} undoLevel
+     */
+    // async function updateText(textarea, textState, undoLevel) {
+    //   // if (this instanceof Window) throw new Error("Incorrect this");
+    //   // let text, index;
+    //   // // if (typeof text === "function") {
+    //   // //   let before = textarea.value.slice(0, textarea.selectionEnd);
+    //   // //   let after = textarea.value.slice(textarea.selectionEnd);
+    //   // //   let newBefore = await text(before);
+    //   // //   text = newBefore + after;
+    //   // //   index = newBefore.length;
+    //   // // }
+    //   // if (textState != null && textState.cursor != null) {
+    //   //   index = textState.cursor;
+    //   //   text = textState.text;
+    //   // }
+    //   // if (index != null) {
+    //   //   textarea.selectionStart = index;
+    //   //   textarea.selectionEnd = index;
+    //   // }
+    //   // if (typeof textState === "string") {
+    //   //   textarea.value = textState;
+    //   //   updateEditors();
+    //   // } else {
+    //   //   text = textarea.value;
+    //   // }
+    //   // if (index == null) {
+    //   //   index = textarea.selectionEnd;
+    //   // }
+    //   // // if (undoLevel > 1) {
+    //   // //   UndoManager.push({ text, cursor: textarea.selectionEnd }, false);
+    //   // // } else if (undoLevel > 0) {
+    //   // //   UndoManager.push({ text, cursor: textarea.selectionEnd }, true);
+    //   // // }
+    //   // if (textState === lastServerValue) {
+    //   //   localStorage.removeItem(localStoragePrefix + "|text");
+    //   // } else {
+    //   //   localStorage.setItem(localStoragePrefix + "|text", textState);
+    //   // }
+    //   // // let lastWord = getLastCompleteWord(text.slice(0, index));
+    //   // // if (lastWord && text.length > lastLength) {
+    //   // //   SpeechManager.push(lastWord);
+    //   // // }
+    //   // lastLength = textState.length;
+    // }
+
+    // textarea.addEventListener("input", () => updateText(undefined, 1));
+
+    // textarea.addEventListener("keydown", async function (event) {
+    //   if (
+    //     event.key === "Backspace" ||
+    //     event.key === "ArrowUp" ||
+    //     event.key === "ArrowDown" ||
+    //     event.key === "ArrowLeft" ||
+    //     // event.key === "ArrowRight" ||
+    //     event.key === "Escape"
+    //   ) {
+    //     SpeechManager.reset();
+    //   }
+
+    //   if (
+    //     event.altKey &&
+    //     !event.ctrlKey &&
+    //     !event.metaKey &&
+    //     !event.shiftKey &&
+    //     event.key === "Backspace"
+    //   ) {
+    //     lastLength = 0;
+    //     SpeechManager.reset();
+    //     updateText(deleteLastWord, 2);
+    //     event.preventDefault();
+    //   } else if (
+    //     !event.altKey &&
+    //     !event.ctrlKey &&
+    //     event.metaKey &&
+    //     !event.shiftKey &&
+    //     event.key === "Backspace"
+    //   ) {
+    //     SpeechManager.reset();
+    //     updateText(deleteLastSentence, 2);
+    //     event.preventDefault();
+    //   } else if (
+    //     !event.altKey &&
+    //     !event.ctrlKey &&
+    //     event.metaKey &&
+    //     !event.shiftKey &&
+    //     event.key === "z"
+    //   ) {
+    //     updateText(await UndoManager.undo(), 0);
+    //     event.preventDefault();
+    //   } else if (
+    //     !event.altKey &&
+    //     !event.ctrlKey &&
+    //     event.metaKey &&
+    //     event.shiftKey &&
+    //     event.key === "z"
+    //   ) {
+    //     updateText(await UndoManager.redo(), 0);
+    //     event.preventDefault();
+    //   } else if (
+    //     !event.altKey &&
+    //     !event.ctrlKey &&
+    //     event.metaKey &&
+    //     !event.shiftKey &&
+    //     event.key === "a"
+    //   ) {
+    //     selectParagraph();
+    //     event.preventDefault();
+    //   } else if (
+    //     !event.altKey &&
+    //     !event.ctrlKey &&
+    //     event.metaKey &&
+    //     !event.shiftKey &&
+    //     event.key === "ArrowUp"
+    //   ) {
+    //     selectParagraph(-1);
+    //     event.preventDefault();
+    //   } else if (
+    //     !event.altKey &&
+    //     !event.ctrlKey &&
+    //     event.metaKey &&
+    //     !event.shiftKey &&
+    //     event.key === "ArrowDown"
+    //   ) {
+    //     selectParagraph(1);
+    //     event.preventDefault();
+    //   } else if (
+    //     event.altKey &&
+    //     !event.ctrlKey &&
+    //     !event.metaKey &&
+    //     !event.shiftKey &&
+    //     event.key === "ArrowLeft"
+    //   ) {
+    //     selectWord(-1);
+    //     event.preventDefault();
+    //   } else if (
+    //     event.altKey &&
+    //     !event.ctrlKey &&
+    //     !event.metaKey &&
+    //     !event.shiftKey &&
+    //     event.key === "ArrowRight"
+    //   ) {
+    //     selectWord(1);
+    //     event.preventDefault();
+    //   } else if (
+    //     !event.altKey &&
+    //     !event.ctrlKey &&
+    //     !event.metaKey &&
+    //     (event.key.length === 1 || event.key === "Enter") &&
+    //     this.selectionStart !== this.selectionEnd
+    //   ) {
+    //     let text = this.value.slice(this.selectionStart, this.selectionEnd);
+    //     if (text.match(/\s+/)) {
+    //       this.selectionStart = this.selectionEnd;
+    //     }
+    //   }
+    // });
+
+    // window.addEventListener("keydown", async function (event) {
+    //   if (
+    //     !event.altKey &&
+    //     !event.ctrlKey &&
+    //     event.metaKey &&
+    //     !event.shiftKey &&
+    //     event.key === "s"
+    //   ) {
+    //     event.preventDefault();
+    //     await save();
+    //   }
+    // });
+
+    // textarea.addEventListener("mousedown", function (event) {
+    //   if (!event.metaKey && !event.shiftKey) {
+    //     this.selectionStart = this.textLength;
+    //     this.selectionEnd = this.textLength;
+    //     this.focus();
+    //     event.preventDefault();
+    //   }
+    // });
+
+    const FullText = {
+      _text: "",
+
+      set value(text) {
+        this._text = text;
+        updateEditors();
+      },
+
+      get value() {
+        return this._text;
+      },
+
+      /**
+       * @param {number} index
+       */
+      set cursor(index) {
+        fullTextEditor.selectionStart = fullTextEditor.selectionEnd = index;
+      },
+
+      get cursor() {
+        return fullTextEditor.selectionEnd;
+      },
+    };
+
+    const LineEditing = {
+      updateLines() {
+        this._lines = this.all.split(/\n\n+/g);
+        if (this._lineIndex < 0) {
+          this._lineIndex = 0;
+        } else if (this._lineIndex >= this._lines.length) {
+          this._lineIndex = this._lines.length - 1;
+        }
+      },
+
+      _lines: undefined,
+
+      get lines() {
+        if (this._lines == null) this.updateLines();
+
+        return this._lines;
+      },
+
+      _lineIndex: +location.hash.slice(1) || 0,
+
+      get lineIndex() {
+        return this._lineIndex;
+      },
+
+      set lineIndex(lineIndex) {
+        this._lineIndex = lineIndex;
+        this.updateLines();
+      },
+
+      get currentLine() {
+        return this.lines[this.lineIndex].replace(/\n*$/, "");
+      },
+
+      set currentLine(currentLine) {
+        this.lines[this.lineIndex] = currentLine.replace(/\n*$/, "");
+        this.all = this.lines.join("\n\n");
+        this.updateLines();
+      },
+
+      getCurrentLine(offset) {
+        let index = this.lineIndex + offset;
+        if (index < 0) {
+          return "START OF DOCUMENT";
+        } else if (index >= this.lines.length) {
+          return "END OF DOCUMENT";
+        }
+        return this.lines[index].replace(/\n*$/, "");
+      },
+
+      set all(text) {
+        allowUpdatingEditors = false;
+        FullText.value = text;
+        allowUpdatingEditors = true;
+        this._lines = undefined;
+      },
+
+      get all() {
+        return FullText.value;
+      },
+    };
+
+    function updateEditors() {
+      if (!allowUpdatingEditors) return;
+      console.log("updateEditors");
+
+      for (let editor of document.querySelectorAll(".line-editor")) {
+        let offset = +editor.getAttribute("data-offset") || 0;
+        if (editor instanceof HTMLTextAreaElement) {
+          editor.value = LineEditing.getCurrentLine(offset);
+        } else {
+          editor.textContent = LineEditing.getCurrentLine(offset);
+        }
+      }
+      document.querySelector("div#line-index").textContent =
+        //
+        `${LineEditing.lineIndex + 1} / ${LineEditing.lines.length}`;
+    }
+
+    function advancePage(offset) {
+      LineEditing.lineIndex = LineEditing.lineIndex + offset;
+      updateEditors();
+      location.hash = "#" + LineEditing.lineIndex;
+    }
+
+    lineEditor.addEventListener("keydown", async function (event) {
+      if (
+        event.key === "ArrowUp" &&
+        !event.altKey &&
+        event.ctrlKey &&
+        !event.shiftKey &&
+        !event.metaKey
+      ) {
+        advancePage(-1);
+      } else if (
+        event.key === "ArrowDown" &&
+        !event.altKey &&
+        event.ctrlKey &&
+        !event.shiftKey &&
+        !event.metaKey
+      ) {
+        advancePage(1);
+      }
+    });
+
+    document
+      .querySelector("#button-prev")
+      .addEventListener("click", function () {
+        advancePage(-1);
+      });
+
+    document
+      .querySelector("#button-next")
+      .addEventListener("click", function () {
+        advancePage(1);
+      });
+
+    let allowUpdatingEditors = true;
+    lineEditor.addEventListener("input", function (event) {
+      let numLines = LineEditing.lines.length;
+      LineEditing.currentLine = this.value;
+      if (LineEditing.lines.length > numLines) {
+        LineEditing.lineIndex++;
+        updateEditors();
+      }
+
+      let lastWord = getLastCompleteWord(LineEditing.currentLine);
+      if (lastWord) {
+        SpeechManager.push(lastWord);
+      }
+    });
+
+    init();
+  </script>
+</html>
