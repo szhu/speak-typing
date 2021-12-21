@@ -28,12 +28,16 @@
       }
 
       node[type="sentence"]::after {
-        content: "  ";
+        content: " ";
       }
 
-      :root[debug] node[type="sentence"]::after {
-        padding-bottom: 5px;
-        border-bottom: 1px solid orange;
+      node[type="sentence"] + node[type="sentence"]::before {
+        content: " ";
+      }
+
+      node[type="sentence"][selectedWord] {
+        background: #88888844;
+        border-radius: 2px;
       }
 
       node[type="word"]::after {
@@ -88,8 +92,18 @@
       }
     </style>
   </head>
-  <body>
-    <label><input type="checkbox" onclick="toggleDebug(event);" /> Debug</label>
+  <body tabindex="-1">
+    <label>
+      <input
+        id="debug"
+        type="checkbox"
+        onclick="toggleDebug(event);"
+        tabindex="-1"
+      />
+      Debug
+    </label>
+    &nbsp;&middot;&nbsp;
+    <button onclick="copyText()" tabindex="-1">Copy</button>
     <hr />
     <node type="root"></node>
   </body>
@@ -103,11 +117,19 @@
     }
 
     function toggleDebug(event) {
-      if (event.target.checked) {
+      if (event == true || event.target.checked) {
         document.documentElement.setAttribute("debug", "");
+        location.hash = "#debug";
       } else {
         document.documentElement.removeAttribute("debug");
+        location.hash = "";
       }
+    }
+
+    async function copyText() {
+      let text = Dom.text(document.querySelector(`node[type="root"]`));
+      await navigator.clipboard.writeText(text);
+      console.log("Copied text:", [text]);
     }
 
     let voice = speechSynthesis
@@ -346,7 +368,9 @@
 
         if (currentWord) {
           currentWord.removeAttribute("selected");
+          currentWord.parentElement.removeAttribute("selectedWord");
         }
+        newWord.parentElement.setAttribute("selectedWord", "");
         newWord.setAttribute("selected", "");
 
         if (currentWord) {
@@ -675,6 +699,12 @@
         newSentence.append(newWord);
         paragraph.append(newSentence);
         root.append(paragraph);
+      }
+
+      if (location.hash === "#debug") {
+        document.querySelector("#debug").checked = true;
+        document.body.focus();
+        toggleDebug(true);
       }
     }
   </script>
