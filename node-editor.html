@@ -379,6 +379,8 @@
         if (!newWord.isConnected) {
           throw new Error("Word is not connected to the DOM");
         }
+
+        Storage.save();
       },
 
       delete(node, allowAgain = 2) {
