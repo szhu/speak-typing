@@ -620,9 +620,28 @@
         let root = document.querySelector(`node[type="root"]`);
         localStorage.setItem(this.key, root.innerHTML);
       },
+      sanitize(html) {
+        let parsed = new DOMParser().parseFromString(html, "text/html");
+
+        // Remove any element that's not an editor node.
+        for (let notNode of parsed.body.querySelectorAll(":not(node)")) {
+          notNode.remove();
+        }
+
+        // Remove all text nodes.
+        let i = parsed.evaluate("//text()", parsed);
+        let texts = [];
+        for (let text = i.iterateNext(); text; text = i.iterateNext()) {
+          texts.push(text);
+        }
+        texts.forEach((text) => text.remove());
+
+        return parsed.body.innerHTML;
+      },
       load() {
         let root = document.querySelector(`node[type="root"]`);
-        root.innerHTML = localStorage.getItem(this.key) ?? "";
+        let html = localStorage.getItem(this.key) ?? "";
+        root.innerHTML = this.sanitize(html);
         for (let node of root.querySelectorAll(`node`)) {
           hydrateNode(node);
         }
@@ -666,6 +685,8 @@
         Dom.selectParagraphAt(-1);
       } else if (key(e, ["Alt?"], "ArrowDown")) {
         Dom.selectParagraphAt(1);
+      } else {
+        return;
       }
 
       Storage.save();
