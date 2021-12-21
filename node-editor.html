@@ -1,0 +1,681 @@
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+
+    <title>Typewriter</title>
+    <style>
+      node[type="root"] {
+        white-space: pre-wrap;
+      }
+
+      :root[debug] node[type="root"] {
+        line-height: 2em;
+      }
+
+      node[type="paragraph"] {
+        display: block;
+        padding: 0.5em 0;
+      }
+
+      :root[debug] node[type="sentence"] {
+        padding-bottom: 5px;
+        border-bottom: 1px solid red;
+      }
+
+      node[type="sentence"]::after {
+        content: "  ";
+      }
+
+      :root[debug] node[type="sentence"]::after {
+        padding-bottom: 5px;
+        border-bottom: 1px solid orange;
+      }
+
+      node[type="word"]::after {
+        content: attr(text);
+      }
+
+      :root[debug] node[type="word"]::after {
+        border-bottom: 1px solid green;
+      }
+
+      node[type="word"] + node[type="word"] {
+        margin-left: 0.1ch;
+      }
+
+      node[type="word"] + node[type="word"]::before {
+        content: " ";
+      }
+
+      node[type="word"]:first-of-type:not([selected]) + node[type="word"] {
+        margin-left: unset;
+      }
+
+      node[type="word"]:first-of-type:not([selected])
+        + node[type="word"]::before {
+        content: unset;
+      }
+
+      node[type="word"] + node[type="word"][text="."]::before,
+      node[type="word"] + node[type="word"][text="!"]::before,
+      node[type="word"] + node[type="word"][text="?"]::before {
+        content: "";
+      }
+
+      node[type="word"][selected]::after {
+        background: #88888888;
+        border-right: 1px solid transparent;
+      }
+
+      node[type="word"]:not([selected])[text=""] {
+        display: none;
+      }
+
+      node[type="word"][selected][text=""]::after {
+        display: inline-block;
+        background: currentColor;
+        height: 1em;
+        vertical-align: text-top;
+      }
+
+      node[type="word"][selected]:not([text=""])::after {
+        border-color: currentColor;
+      }
+    </style>
+  </head>
+  <body>
+    <label><input type="checkbox" onclick="toggleDebug(event);" /> Debug</label>
+    <hr />
+    <node type="root"></node>
+  </body>
+  <script>
+    // @ts-check
+
+    let sentence = "Hello! This is a test.";
+
+    function newId() {
+      return Math.random().toString(36).substring(2, 15);
+    }
+
+    function toggleDebug(event) {
+      if (event.target.checked) {
+        document.documentElement.setAttribute("debug", "");
+      } else {
+        document.documentElement.removeAttribute("debug");
+      }
+    }
+
+    let voice = speechSynthesis
+      .getVoices()
+      .find((voice) => voice.name === "Samantha");
+
+    const SpeechManager = {
+      current: null,
+      next: null,
+      advance() {
+        this.current = this.next;
+        this.next = null;
+        if (this.current) {
+          speechSynthesis.speak(this.current);
+        }
+      },
+      push(word, delimiter = ". ") {
+        word = '"' + word.trim() + '"';
+        if (this.next) {
+          this.next = this.makeUtterance(this.next.text + delimiter + word);
+        } else {
+          this.next = this.makeUtterance(word);
+        }
+        if (this.paused || !this.current) {
+          this.advance();
+        }
+      },
+      reset() {
+        speechSynthesis.cancel();
+        this.current = null;
+        this.next = null;
+      },
+
+      makeUtterance(text) {
+        let opts = {
+          voice,
+          rate: 1.5,
+          text,
+        };
+        let utterance = new SpeechSynthesisUtterance();
+        for (let key in opts) {
+          utterance[key] = opts[key];
+        }
+        utterance.addEventListener("end", () => {
+          if (this.current === utterance) {
+            this.advance();
+          }
+        });
+        return utterance;
+      },
+    };
+
+    /**
+     * @typedef {(
+     *  { type: "root" } |
+     *  { type: "paragraph", id: string } |
+     *  { type: "sentence", id: string } |
+     *  { type: "word", id: string, text: string, selected?: '' } |
+     *  { type: "cursor" } |
+     *  never
+     * )} NodeProps
+     * @param {NodeProps} props
+     */
+    function createNode(props) {
+      let node = document.createElement("node");
+      for (let key in props) {
+        node.setAttribute(key, props[key]);
+      }
+      hydrateNode(node);
+      return node;
+    }
+
+    function hydrateNode(node) {
+      switch (node.getAttribute("type")) {
+        case "word":
+          node.addEventListener("click", function (e) {
+            if (e.target !== this) return;
+            Dom.selectWord(node);
+          });
+          break;
+        case "sentence":
+          node.addEventListener("click", function (e) {
+            if (e.target !== this) return;
+            let selector = `node[type='word']:last-child`;
+            Dom.selectWord(this.querySelector(selector));
+          });
+          break;
+        case "paragraph":
+          node.addEventListener("click", function (e) {
+            if (e.target !== this) return;
+            let selector = `node[type='sentence']:last-child node[type='word']:last-child`;
+            Dom.selectWord(this.querySelector(selector));
+          });
+          break;
+      }
+    }
+
+    const FromText = {
+      parseParagraphText: function (text) {
+        let paragraph = createNode({ type: "paragraph", id: newId() });
+        for (let [full, wordText, puncText] of text.matchAll(
+          /([^.!?]+)([.!?])\s*/g
+        )) {
+          // for (let sentenceText of text.split(/[.!?]\s*/)) {
+          if (full.trim().length === 0) continue;
+
+          let sentence = this.parseSentenceText(wordText, puncText);
+          paragraph.appendChild(sentence);
+        }
+        return paragraph;
+      },
+      parseSentenceText: function (text, punc = "") {
+        let sentence = createNode({ type: "sentence", id: newId() });
+        for (let wordText of [...text.split(/\s+/), punc]) {
+          if (wordText.trim().length === 0) continue;
+
+          let emptyWord = createNode({ type: "word", id: newId(), text: "" });
+          sentence.appendChild(emptyWord);
+          let word = createNode({ type: "word", id: newId(), text: wordText });
+          sentence.appendChild(word);
+        }
+        return sentence;
+      },
+    };
+
+    const Dom = {
+      get currentParagraph() {
+        return this.currentWord?.closest(`node[type="paragraph"]`);
+      },
+      get currentSentence() {
+        return this.currentWord?.closest(`node[type="sentence"]`);
+      },
+      get currentWord() {
+        return document.querySelector(`node[type="word"][selected]`);
+      },
+
+      text(node, newText = undefined) {
+        switch (node.getAttribute("type")) {
+          case "word":
+            if (newText == null) {
+              return node.getAttribute("text");
+            } else {
+              node.setAttribute("text", newText);
+            }
+            return;
+          case "sentence":
+            if (newText == null) {
+              let words = Array.from(node.children)
+                .map((word) => this.text(word))
+                .filter(Boolean);
+              let punc = words.pop() ?? "";
+              return words.join(" ") + punc;
+            } else if (newText === "") {
+              while (node.childElementCount > 1) {
+                node.firstChild.remove();
+              }
+              this.text(node.firstChild, "");
+            } else {
+              throw new Error("Not implemented");
+            }
+            return;
+          case "paragraph":
+            if (newText == null) {
+              return Array.from(node.children)
+                .map((sentence) => this.text(sentence))
+                .filter(Boolean)
+                .join("  ");
+            } else if (newText === "") {
+              while (node.childElementCount > 1) {
+                node.firstChild.remove();
+              }
+              this.text(node.firstChild, "");
+            } else {
+              throw new Error("Not implemented");
+            }
+            return;
+          case "root":
+            if (newText == null) {
+              return Array.from(node.children)
+                .map((paragraph) => this.text(paragraph))
+                .filter(Boolean)
+                .join("\n\n");
+            } else if (newText === "") {
+              while (node.childElementCount > 1) {
+                node.firstChild.remove();
+              }
+              this.text(node.firstChild, "");
+            } else {
+              throw new Error("Not implemented");
+            }
+            return;
+
+          default:
+            throw new Error("Not implemented");
+        }
+      },
+      get currentWordText() {
+        return this.text(this.currentWord);
+      },
+      set currentWordText(text) {
+        this.text(this.currentWord, text);
+      },
+
+      findSelectedWord(node) {
+        let selector = `node[type="word"][selected]`;
+        if (node.matches(selector)) {
+          return node;
+        } else {
+          return node.querySelector(selector);
+        }
+      },
+
+      previousWords(word) {
+        let words = [];
+
+        if (word.previousElementSibling) {
+          words.push(word.previousElementSibling);
+        }
+
+        let sentence = word.closest(`node[type="sentence"]`);
+        if (sentence.previousElementSibling) {
+          words.push(sentence.previousElementSibling.lastChild);
+        }
+
+        let paragraph = word.closest(`node[type="paragraph"]`);
+        if (paragraph.previousElementSibling) {
+          words.push(paragraph.previousElementSibling.lastChild.lastChild);
+        }
+
+        return words;
+      },
+
+      selectWord(newWord) {
+        let currentWord = this.currentWord;
+        if (currentWord === newWord) return;
+
+        if (currentWord) {
+          currentWord.removeAttribute("selected");
+        }
+        newWord.setAttribute("selected", "");
+
+        if (currentWord) {
+          this.removeEmptyWordAndAncestors(currentWord);
+        }
+        if (!newWord.isConnected) {
+          throw new Error("Word is not connected to the DOM");
+        }
+      },
+
+      delete(node, allowAgain = 2) {
+        let currentWord = this.findSelectedWord(node);
+        let previousWords = currentWord ? this.previousWords(currentWord) : [];
+
+        let again = 0;
+        if (
+          this.text(node) === "" &&
+          node.parentElement.childElementCount > 1
+        ) {
+          node.remove();
+          if (node.matches(`node[type="word"], node[type="sentence"]`)) {
+            again = allowAgain;
+          }
+        } else {
+          this.text(node, "");
+          if (node.matches(`node[type="word"], node[type="sentence"]`)) {
+            again = allowAgain && 1;
+          }
+        }
+
+        if (!this.currentWord) {
+          for (let previousWord of previousWords) {
+            if (previousWord.isConnected) {
+              this.selectWord(previousWord);
+              break;
+            }
+          }
+        }
+        if (!this.currentWord) {
+          throw new Error("No previous word");
+        }
+
+        if (again) {
+          this.delete(this.currentWord, again - 1);
+        }
+      },
+
+      insertNewParagraph(afterParagraph = this.currentParagraph) {
+        let newParagraph = createNode({ type: "paragraph", id: newId() });
+        let newSentence = createNode({ type: "sentence", id: newId() });
+        let newWord = createNode({ type: "word", id: newId(), text: "" });
+        newSentence.appendChild(newWord);
+        newParagraph.appendChild(newSentence);
+        afterParagraph.insertAdjacentElement("afterend", newParagraph);
+        return { newParagraph, newSentence, newWord };
+      },
+      insertAndSelectNewParagraph() {
+        speak();
+        let { newWord } = this.insertNewParagraph();
+        this.selectWord(newWord);
+      },
+      insertNewSentence(afterSentence = this.currentSentence) {
+        let newSentence = createNode({ type: "sentence", id: newId() });
+        let newWord = createNode({ type: "word", id: newId(), text: "" });
+        newSentence.appendChild(newWord);
+        afterSentence.insertAdjacentElement("afterend", newSentence);
+        return { newSentence, newWord };
+      },
+      insertAndSelectNewSentence() {
+        speak();
+        let { newWord } = this.insertNewSentence();
+        this.selectWord(newWord);
+      },
+      insertNewWord(relWord = this.currentWord, position = "afterEnd") {
+        let newWord = createNode({ type: "word", id: newId(), text: "" });
+        relWord.insertAdjacentElement(position, newWord);
+        return { newWord };
+      },
+      insertAndSelectNewWord() {
+        speak();
+        let { newWord } = this.insertNewWord();
+        this.selectWord(newWord);
+      },
+
+      removeEmptyWordAndAncestors(word) {
+        if (word.matches(`[selected]`)) {
+          throw new Error("Cannot remove selected word");
+        }
+
+        if (!word.matches(`node[text=""]`)) {
+          return;
+        }
+
+        let hasEmptySibling =
+          word.previousElementSibling?.matches(`node[text=""]`) ||
+          word.nextElementSibling?.matches(`node[text=""]`);
+
+        let sentence = word.closest(`node[type="sentence"]`);
+        if (hasEmptySibling) {
+          word.remove();
+        }
+        if (
+          sentence.childElementCount > 1 ||
+          !sentence.firstElementChild.matches(`node[text=""]:not([selected])`)
+        ) {
+          return;
+        }
+
+        let paragraph = sentence.closest(`node[type="paragraph"]`);
+        sentence.remove();
+        if (paragraph.childElementCount > 0) {
+          return;
+        }
+
+        paragraph.remove();
+      },
+      normalizeCurrentWord() {
+        let lastChar = this.currentWordText.slice(-1);
+        // if (
+        //   lastChar === " " &&
+        //   this.currentWordText.slice(-2, -1)?.match(/^[.!?]$/)
+        // ) {
+        //   this.currentWordText = this.currentWordText.slice(0, -1);
+        //   lastChar = this.currentWordText.slice(-1);
+        // }
+
+        if (lastChar === " ") {
+          this.currentWordText = this.currentWordText.slice(0, -1);
+          this.insertAndSelectNewWord();
+        } else if (lastChar.match(/^[.!?]$/)) {
+          this.currentWordText = this.currentWordText.slice(0, -1);
+          this.insertNewWord();
+          this.insertAndSelectNewWord();
+          this.currentWordText = lastChar;
+          // this.insertAndSelectNewSentence();
+        } else {
+          let prev = this.currentWord.previousElementSibling;
+          if (!prev || this.text(prev) !== "") {
+            this.insertNewWord(this.currentWord, "beforeBegin");
+          }
+        }
+      },
+
+      selectWordAt(offset) {
+        let word = this.currentWord;
+        while (offset > 0) {
+          word = word.nextElementSibling ?? word;
+          offset--;
+        }
+        while (offset < 0) {
+          word = word.previousElementSibling ?? word;
+          offset++;
+        }
+        this.selectWord(word);
+      },
+      selectSentenceAt(offset) {
+        let word = this.currentWord;
+        while (offset > 0) {
+          word =
+            word.parentElement?.nextElementSibling?.lastElementChild ?? word;
+          offset--;
+        }
+        while (offset < 0) {
+          word =
+            word.parentElement?.previousElementSibling?.lastElementChild ??
+            word;
+          offset++;
+        }
+        this.selectWord(word);
+      },
+      selectParagraphAt(offset) {
+        let word = this.currentWord;
+        while (offset > 0) {
+          word =
+            word.parentElement?.parentElement?.nextElementSibling
+              ?.lastElementChild.lastElementChild ?? word;
+          offset--;
+        }
+        while (offset < 0) {
+          word =
+            word.parentElement?.parentElement?.previousElementSibling
+              ?.lastElementChild.lastElementChild ?? word;
+          offset++;
+        }
+        this.selectWord(word);
+      },
+    };
+
+    let lastWordText = undefined;
+
+    function speak() {
+      if (lastWordText) {
+        SpeechManager.push(lastWordText);
+        lastWordText = undefined;
+      }
+    }
+
+    {
+      /**
+       * @typedef {"Shift" | "Control" | "Alt" | "Meta"} ModifierKey
+       * @param {KeyboardEvent} e
+       * @param {(ModifierKey | `${ModifierKey}?`)[]} modifiers
+       * @param {string | RegExp} keyPattern
+       */
+      function key(e, modifiers, keyPattern = null) {
+        if (e.ctrlKey && e.key !== "Control") debugger;
+        /** @type {boolean | RegExpMatchArray} */
+        let match;
+        if (keyPattern == null) {
+          match = true;
+        } else if (typeof keyPattern === "string") {
+          match = e.key === keyPattern;
+        } else if (keyPattern instanceof RegExp) {
+          match = keyPattern.test(e.key);
+        } else {
+          throw new Error("Invalid key: " + keyPattern);
+        }
+        if (!match) return false;
+
+        /** @type {Record<ModifierKey, boolean>}} */
+        let modifierStates = {
+          Shift: false,
+          Control: false,
+          Alt: false,
+          Meta: false,
+        };
+
+        for (let modifier of modifiers) {
+          if (modifier.endsWith("?")) {
+            modifier = /** @type {ModifierKey} */ (modifier.slice(0, -1));
+            delete modifierStates[modifier];
+          } else {
+            modifierStates[modifier] = true;
+          }
+        }
+        for (let modifierKey in modifierStates) {
+          if (e.getModifierState(modifierKey) !== modifierStates[modifierKey])
+            return false;
+        }
+        return match;
+      }
+    }
+
+    const Storage = {
+      key: "text-editor-state",
+      save() {
+        let root = document.querySelector(`node[type="root"]`);
+        localStorage.setItem(this.key, root.innerHTML);
+      },
+      load() {
+        let root = document.querySelector(`node[type="root"]`);
+        root.innerHTML = localStorage.getItem(this.key) ?? "";
+        for (let node of root.querySelectorAll(`node`)) {
+          hydrateNode(node);
+        }
+      },
+      clear() {
+        localStorage.removeItem(this.key);
+      },
+    };
+
+    window.addEventListener("keydown", (e) => {
+      if (key(e, ["Shift?", "Alt?"], /^.$/)) {
+        e.preventDefault();
+        Dom.currentWordText += e.key;
+        lastWordText = Dom.currentWordText;
+        Dom.normalizeCurrentWord();
+      } else if (key(e, ["Shift?"], "Enter")) {
+        e.preventDefault();
+        Dom.insertAndSelectNewWord();
+        Dom.insertAndSelectNewParagraph();
+      } else if (key(e, ["Shift?"], "Tab")) {
+        e.preventDefault();
+        Dom.insertAndSelectNewWord();
+        Dom.insertAndSelectNewSentence();
+      } else if (key(e, ["Alt"], "Disabled: Backspace")) {
+        Dom.currentWordText = Dom.currentWordText.slice(0, -1);
+      } else if (key(e, [], "Backspace")) {
+        Dom.delete(Dom.currentWord);
+      } else if (key(e, ["Alt"], "Backspace")) {
+        Dom.delete(Dom.currentSentence);
+      } else if (key(e, ["Shift"], "Backspace")) {
+        Dom.delete(Dom.currentParagraph);
+      } else if (key(e, [], "ArrowLeft")) {
+        Dom.selectWordAt(-1);
+      } else if (key(e, [], "ArrowRight")) {
+        Dom.selectWordAt(1);
+      } else if (key(e, ["Alt"], "ArrowLeft")) {
+        Dom.selectSentenceAt(-1);
+      } else if (key(e, ["Alt"], "ArrowRight")) {
+        Dom.selectSentenceAt(1);
+      } else if (key(e, ["Alt?"], "ArrowUp")) {
+        Dom.selectParagraphAt(-1);
+      } else if (key(e, ["Alt?"], "ArrowDown")) {
+        Dom.selectParagraphAt(1);
+      }
+
+      Storage.save();
+    });
+
+    // setInterval(() => {
+    //   if (!Dom.currentWord) {
+    //     debugger;
+    //   }
+    //   if (document.querySelector(`node[type="sentence"]:empty`)) {
+    //     debugger;
+    //   }
+    //   if (document.querySelector(`node[type="paragraph"]:empty`)) {
+    //     debugger;
+    //   }
+    // }, 50);
+
+    {
+      Storage.load();
+
+      let root = document.querySelector(`node[type="root"]`);
+      if (root.childElementCount === 0) {
+        let paragraph = FromText.parseParagraphText(sentence);
+        let newSentence = FromText.parseSentenceText("");
+        let newWord = createNode({
+          type: "word",
+          id: newId(),
+          text: "",
+          selected: "",
+        });
+        newSentence.append(newWord);
+        paragraph.append(newSentence);
+        root.append(paragraph);
+      }
+    }
+  </script>
+</html>
